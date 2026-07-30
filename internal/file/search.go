@@ -620,14 +620,87 @@ func isRegexSpecial(c byte) bool {
 	return strings.ContainsRune(`\.+*?()|[]{}^$`, rune(c))
 }
 
+// convertUnicodeEscape converts \uXXXX, \u{XXXX}, and \UXXXXXXXX escape sequences
+// to Go-compatible \x{XXXX} syntax before regex compilation.
+// Go's RE2 regex engine does not support \uXXXX or \u{XXXX} notation (common in JavaScript/Python/Java/Rust),
+// but supports \x{XXXX} for Unicode code points.
+func convertUnicodeEscape(pattern string) string {
+	var buf strings.Builder
+	i := 0
+	for i < len(pattern) {
+		if pattern[i] == '\\' && i+1 < len(pattern) {
+			next := pattern[i+1]
+			if next == '\\' {
+				// Escaped backslash — copy both bytes, don't treat second \ as escape start
+				buf.WriteString("\\\\")
+				i += 2
+				continue
+			} else if next == 'u' && i+3 <= len(pattern) && pattern[i+2] == '{' {
+				// Brace format: \u{XXXX} (variable length, 1+ hex digits)
+				j := i + 3
+				for j < len(pattern) && pattern[j] != '}' {
+					j++
+				}
+				if j < len(pattern) && j > i+3 {
+					hex := pattern[i+3 : j]
+					if isHex(hex) {
+						buf.WriteString("\\x{")
+						buf.WriteString(hex)
+						buf.WriteString("}")
+						i = j + 1
+						continue
+					}
+				}
+			} else if next == 'u' && i+6 <= len(pattern) {
+				// \uXXXX (4 hex digits, no braces)
+				hex := pattern[i+2 : i+6]
+				if isHex(hex) {
+					buf.WriteString("\\x{")
+					buf.WriteString(hex)
+					buf.WriteString("}")
+					i += 6
+					continue
+				}
+			} else if next == 'U' && i+10 <= len(pattern) {
+				// \UXXXXXXXX (8 hex digits)
+				hex := pattern[i+2 : i+10]
+				if isHex(hex) {
+					buf.WriteString("\\x{")
+					buf.WriteString(hex)
+					buf.WriteString("}")
+					i += 10
+					continue
+				}
+			}
+		}
+		buf.WriteByte(pattern[i])
+		i++
+	}
+	return buf.String()
+}
+
+// isHex checks if the given string is a valid hexadecimal number.
+func isHex(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	for i := range len(s) {
+		c := s[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return false
+		}
+	}
+	return true
+}
+
 // compileNameMatcher compiles a file name matcher for the given pattern and mode.
 // Supports "glob", "regex", and "substring" modes.
 func compileNameMatcher(pattern, mode string, caseSensitive bool) (func(string) bool, error) {
 	switch mode {
 	case "regex":
-		p := pattern
+		p := convertUnicodeEscape(pattern)
 		if !caseSensitive {
-			p = "(?i)" + pattern
+			p = "(?i)" + p
 		}
 		re, err := regexp.Compile(p)
 		if err != nil {
@@ -660,9 +733,9 @@ func compileNameMatcher(pattern, mode string, caseSensitive bool) (func(string) 
 func compileContentMatcher(pattern, mode string, caseSensitive bool) (func(string) bool, error) {
 	switch mode {
 	case "regex":
-		p := pattern
+		p := convertUnicodeEscape(pattern)
 		if !caseSensitive {
-			p = "(?i)" + pattern
+			p = "(?i)" + p
 		}
 		re, err := regexp.Compile(p)
 		if err != nil {
