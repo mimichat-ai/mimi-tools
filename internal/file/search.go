@@ -48,7 +48,7 @@ type SearchContentMatch struct {
 	Context []string `json:"context,omitempty" jsonschema:"context lines around the match (before + after)"`
 }
 
-const maxSearchResults = 100
+const maxSearchResults = 10000
 
 // HandleSearchName handles the search_name tool call.
 // Arguments are accepted as raw any to tolerate LLMs that send numbers

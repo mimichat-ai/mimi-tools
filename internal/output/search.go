@@ -11,6 +11,8 @@ import (
 	"strings"
 )
 
+const maxSearchDisplay = 10000
+
 // SearchContentMatch represents a single match in search_content.
 type SearchContentMatch struct {
 	Path    string
@@ -53,7 +55,7 @@ func FormatSearchContent(o SearchContentOutput) string {
 	// Count unique files and render
 	fileCount := 0
 	for _, path := range sortedPaths {
-		if fileCount >= 100 {
+		if fileCount >= maxSearchDisplay {
 			continue
 		}
 		fileCount++
@@ -83,12 +85,12 @@ func FormatSearchContent(o SearchContentOutput) string {
 		}
 	}
 
-	if len(fileMatches) > 100 {
-		fmt.Fprintf(&sb, "\n... and %d more files\n", len(fileMatches)-100)
+	if len(fileMatches) > maxSearchDisplay {
+		fmt.Fprintf(&sb, "\n... and %d more files\n", len(fileMatches)-maxSearchDisplay)
 	}
 
 	if o.IsLimited {
-		sb.WriteString("\nShowing: 100 (limit reached — use more specific pattern to narrow results)\n")
+		fmt.Fprintf(&sb, "\nShowing: %d (limit reached — use more specific pattern to narrow results)\n", maxSearchDisplay)
 	}
 
 	return sb.String()
@@ -111,7 +113,7 @@ func FormatSearchName(o SearchNameOutput) string {
 	fmt.Fprintf(&sb, "* **Total Found:** `%d` files\n\n", o.Total)
 
 	for i, f := range o.Files {
-		if i >= 100 {
+		if i >= maxSearchDisplay {
 			fmt.Fprintf(&sb, "\n... and %d more files\n", len(o.Files)-i)
 			break
 		}

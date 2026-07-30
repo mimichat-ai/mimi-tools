@@ -20,14 +20,7 @@ type ExecOutput struct {
 	WaitSeconds float64
 }
 
-const (
-	execTruncateLines = 210
-	headLines         = 100
-	tailLines         = 100
-)
-
 // FormatExec generates the Markdown for execution results.
-// Callers must truncate Stdout/Stderr via TruncateExecOutput before calling.
 func FormatExec(o ExecOutput) string {
 	var sb strings.Builder
 
@@ -65,29 +58,6 @@ func FormatExec(o ExecOutput) string {
 		sb.WriteString(formatCodeBlock(o.Stderr, "text"))
 	}
 
-	return sb.String()
-}
-
-// TruncateExecOutput truncates command output if it exceeds the line limit.
-// Unlike TruncateOutput, this does not add line numbers as they are not
-// meaningful for command execution output.
-func TruncateExecOutput(s string) string {
-	lines := SplitLines(s)
-	total := len(lines)
-	if total <= execTruncateLines {
-		return s
-	}
-	var sb strings.Builder
-	for i := 0; i < headLines && i < total; i++ {
-		sb.WriteString(lines[i])
-		sb.WriteString("\n")
-	}
-	fmt.Fprintf(&sb, "\n... (truncated %d lines) ...\n\n", total-execTruncateLines)
-	start := max(total-tailLines, headLines)
-	for i := start; i < total; i++ {
-		sb.WriteString(lines[i])
-		sb.WriteString("\n")
-	}
 	return sb.String()
 }
 

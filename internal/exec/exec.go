@@ -93,8 +93,8 @@ func HandleExec(ctx context.Context, _ *mcp.CallToolRequest, args any) (*mcp.Cal
 		if execErr, ok := err.(*ExecError); ok {
 			outResult := &output.ExecOutput{
 				Path:     parsed.Path,
-				Stdout:   output.TruncateExecOutput(execErr.Stdout),
-				Stderr:   output.TruncateExecOutput(execErr.Stderr),
+				Stdout:   execErr.Stdout,
+				Stderr:   execErr.Stderr,
 				ExitCode: execErr.ExitCode,
 				Running:  false,
 			}
@@ -122,8 +122,8 @@ func HandleExec(ctx context.Context, _ *mcp.CallToolRequest, args any) (*mcp.Cal
 	// Success path
 	outResult := &output.ExecOutput{
 		Path:        parsed.Path,
-		Stdout:      output.TruncateExecOutput(result.Stdout),
-		Stderr:      output.TruncateExecOutput(result.Stderr),
+		Stdout:      result.Stdout,
+		Stderr:      result.Stderr,
 		ExitCode:    result.ExitCode,
 		Running:     result.Running,
 		PID:         result.PID,
