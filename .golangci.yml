@@ -1,0 +1,27 @@
+version: 2
+
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    - unused
+    - errcheck
+    - staticcheck
+    - govet
+    - ineffassign
+
+linters-settings:
+  errcheck:
+    check-type-assertions: true
+    check-blank: true
+  govet:
+    enable:
+      - shadow
+
+formatters:
+  enable:
+    - gofmt
+  options:
+    gofmt:
+      simplify: true

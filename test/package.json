@@ -1,0 +1,13 @@
+{
+  "name": "mimi-tools-mcp-test",
+  "version": "1.0.0",
+  "description": "MCP server automated test scripts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "test": "node test_mcp.mjs"
+  },
+  "devDependencies": {
+    "chalk": "^5.6.2"
+  }
+}

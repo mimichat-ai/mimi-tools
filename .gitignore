@@ -1,0 +1,23 @@
+# mimi-tools
+# MCP tool server providing LLM-callable: exec, read, write, edit, search_name, search_content, tree
+
+# Built artifacts
+/mimi-tools
+/mimi-tools.tar
+*.exe
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Dependencies
+vendor/

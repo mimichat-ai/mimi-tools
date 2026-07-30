@@ -1,0 +1,99 @@
+name: Go
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        go-version: ['1.26']
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Install golangci-lint
+        if: runner.os == 'Linux'
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.12.2
+
+      - name: Lint
+        if: runner.os == 'Linux'
+        run: golangci-lint run ./...
+
+      - name: Test (with race detection)
+        run: go test -race -v -count=1 ./...
+
+      - name: Build
+        shell: bash
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "none")
+          BUILDTIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          go build -trimpath -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildTime=$BUILDTIME" -o mimi-tools ./cmd/mimi-tools
+
+  integration-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build mimi-tools binary
+        run: |
+          VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          COMMIT=$(git rev-parse --short HEAD 2>/dev/null || echo "none")
+          BUILDTIME=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          go build -trimpath -ldflags "-X main.version=$VERSION -X main.commit=$COMMIT -X main.buildTime=$BUILDTIME" -o mimi-tools ./cmd/mimi-tools
+
+      - name: Start mimi-tools server
+        run: |
+          MIMI_TRANSPORT=http MIMI_ADDR=127.0.0.1:2399 ./mimi-tools &
+          echo $! > /tmp/mimi-tools.pid
+          # Wait for server to be ready (max 15 seconds)
+          for i in $(seq 1 15); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -X POST \
+              -H "Content-Type: application/json" \
+              -H "Accept: application/json, text/event-stream" \
+              -d '{"jsonrpc":"2.0","id":"health","method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"health-check","version":"1.0.0"}}}' \
+              http://127.0.0.1:2399/ 2>/dev/null)
+            if [ "$code" = "200" ]; then
+              echo "Server is ready"
+              break
+            fi
+            echo "Waiting for server... ($i)"
+            sleep 1
+          done
+
+      - name: Install npm dependencies
+        working-directory: test
+        run: npm ci
+
+      - name: Run integration tests
+        working-directory: test
+        env:
+          MIMI_BASE_URL: "http://localhost:2399/"
+        run: npm test
+
+      - name: Stop mimi-tools server
+        if: always()
+        run: |
+          kill $(cat /tmp/mimi-tools.pid) 2>/dev/null || true
