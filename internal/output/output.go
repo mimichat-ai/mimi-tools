@@ -45,7 +45,11 @@ func FormatError(toolName string, err ToolError) string {
 	if err.BestMatch != nil {
 		sb.WriteString("\n\n### 🔍 Found Similar Code (Not Replaced)\n\n")
 		fmt.Fprintf(&sb, "**Location:** Lines %d-%d | **Similarity:** %.1f%%\n\n", err.BestMatch.LineStart, err.BestMatch.LineEnd, err.BestMatch.Similarity*100)
-		sb.WriteString("The following code in the file is similar to your `old_string`, but the similarity is below the 95% threshold for automatic replacement.\n\n")
+		if err.Type == "Ambiguous Match" {
+			sb.WriteString("The following code is one of multiple similar blocks found. The match is ambiguous because multiple non-overlapping regions have similarity > 95%.\n\n")
+		} else {
+			sb.WriteString("The following code in the file is similar to your `old_string`, but the similarity is below the 95% threshold for automatic replacement.\n\n")
+		}
 		sb.WriteString("**Difference between your `old_string` and the file content:**\n\n")
 		sb.WriteString("```diff\n")
 		sb.WriteString(err.BestMatch.Diff)

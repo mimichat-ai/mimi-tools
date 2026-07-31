@@ -177,24 +177,20 @@ func TestHandleEdit_FuzzyAmbiguousMatch(t *testing.T) {
 	path := filepath.Join(tmpDir, "ambiguous.txt")
 
 	// File contains two non-overlapping blocks that are both similar to old_string.
-	// Both blocks differ only by a single character (Hello vs Helloo),
+	// Both blocks have the same indentation level but slightly different content,
 	// so each should have similarity > 0.95, but they don't overlap.
-	content := `func handlerA() {
-    fmt.Println("Hello")
-}
-
-func handlerB() {
-    fmt.Println("Helloo")
-}
-`
+	content := "func handlerA() {\n    fmt.Println(\"Hello\")\n}\n\nfunc handlerB() {\n    fmt.Println(\"Helloo\")\n}\n"
 	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
 		t.Fatal(err)
 	}
 
+	// old_string is slightly different from both blocks (extra "!" after Hello)
+	// to trigger fuzzy matching. Both blocks should have similarity > 0.95.
+	// Uses actual newlines, not literal \n.
 	result, _, err := HandleEdit(context.Background(), nil, map[string]any{
 		"path":       path,
-		"old_string": `func handlerA() {\n    fmt.Println("Hello")\n}`,
-		"new_string": `func handlerA() {\n    fmt.Println("Hi")\n}`,
+		"old_string": "func handlerA() {\n    fmt.Println(\"Hello!\")\n}",
+		"new_string": "func handlerA() {\n    fmt.Println(\"Hi!\")\n}",
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -206,17 +202,236 @@ func handlerB() {
 		t.Fatal("expected error result for ambiguous fuzzy match")
 	}
 
-	// Verify the error message mentions "Ambiguous"
+	// Verify the error type is "Ambiguous Match".
+	// Check for the exact type string to avoid false positives from
+	// the temp directory name which may contain "Ambiguous".
 	found := false
 	for _, c := range result.Content {
 		if tc, ok := c.(*mcp.TextContent); ok {
-			if strings.Contains(tc.Text, "Ambiguous") {
+			if strings.Contains(tc.Text, "Ambiguous Match") {
 				found = true
 			}
 		}
 	}
 	if !found {
-		t.Errorf("expected error to mention 'Ambiguous', got: %v", result.Content)
+		t.Errorf("expected error type 'Ambiguous Match', got: %v", result.Content)
+	}
+}
+
+// TestFuzzyNormalize_Indentation verifies that fuzzyNormalize preserves
+// leading whitespace (indentation) and converts tabs to spaces.
+func TestFuzzyNormalize_Indentation(t *testing.T) {
+	cases := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{
+			name:  "tab_converted_to_spaces",
+			input: "\tif x {",
+			want:  "    ifx{",
+		},
+		{
+			name:  "double_tab_converted_to_8_spaces",
+			input: "\t\tif x {",
+			want:  "        ifx{",
+		},
+		{
+			name:  "spaces_preserved_unchanged",
+			input: "    if x {",
+			want:  "    ifx{",
+		},
+		{
+			name:  "tab_and_spaces_same_level_match",
+			input: "\t  if x {",
+			want:  "      ifx{",
+		},
+		{
+			name:  "internal_whitespace_stripped",
+			input: "    fmt.Println( \"Hello\" )",
+			want:  "    fmt.println(\"hello\")",
+		},
+		{
+			name:  "multiline_preserves_per_line_indentation",
+			input: "if x {\n\t\treturn\n}",
+			want:  "ifx{\n        return\n}",
+		},
+		{
+			name:  "empty_string",
+			input: "",
+			want:  "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := fuzzyNormalize(c.input)
+			if got != c.want {
+				t.Errorf("fuzzyNormalize(%q) = %q, want %q", c.input, got, c.want)
+			}
+		})
+	}
+}
+
+// TestHandleEdit_FuzzyTabVsSpace verifies that when the LLM uses spaces
+// but the file uses tabs (same indentation level), the fuzzy match
+// succeeds and the edit is applied.
+func TestHandleEdit_FuzzyTabVsSpace(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "tabs.txt")
+
+	// File uses tabs for indentation
+	content := "func main() {\n\tfmt.Println(\"Hello\")\n}\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// old_string uses 4 spaces (same indentation level as 1 tab)
+	// Exact match will fail (tabs != spaces), but fuzzy match should succeed
+	// because fuzzyNormalize converts tabs to 4 spaces.
+	// Include trailing newline to match the file's format.
+	oldStr := "func main() {\n    fmt.Println(\"Hello\")\n}\n"
+	newStr := "func main() {\n    fmt.Println(\"Hi\")\n}\n"
+
+	result, _, err := HandleEdit(context.Background(), nil, map[string]any{
+		"path":       path,
+		"old_string": oldStr,
+		"new_string": newStr,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got error: %v", result.Content)
+	}
+
+	// Verify file was modified
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := "func main() {\n    fmt.Println(\"Hi\")\n}\n"
+	if string(data) != expected {
+		t.Errorf("expected %q, got %q", expected, string(data))
+	}
+}
+
+// TestHandleEdit_FuzzyWrongIndentation verifies that when the old_string
+// has a different indentation level (e.g., 1 tab vs 2 tabs), the fuzzy
+// match does NOT auto-apply (similarity < 0.95) and instead returns an
+// error with a diff so the LLM can self-correct.
+func TestHandleEdit_FuzzyWrongIndentation(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "indent.txt")
+
+	// File uses double-tab indentation (inside a nested block)
+	content := "\t\tif isBinaryFile(path) {\n\t\t\tt.Error(\"Expected 513-byte file to not be binary\")\n\t\t}\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// old_string uses single-tab indentation (wrong level)
+	// Exact match fails. Fuzzy match should find the block but with
+	// similarity < 0.95 (indentation difference is visible after normalization).
+	oldStr := "\tif isBinaryFile(path) {\n\t\tt.Error(\"Expected 513-byte file to not be binary\")\n\t}"
+	newStr := "\tif isBinaryFile(path) {\n\t\tt.Error(\"Expected 512-byte file to not be binary\")\n\t}"
+
+	result, _, err := HandleEdit(context.Background(), nil, map[string]any{
+		"path":       path,
+		"old_string": oldStr,
+		"new_string": newStr,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Should be an error (similarity < 0.95, not auto-applied)
+	if !result.IsError {
+		t.Fatalf("expected error result (similarity < 0.95), got success: %v", result.Content)
+	}
+
+	// Should contain a diff showing the indentation difference
+	foundDiff := false
+	for _, c := range result.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			if strings.Contains(tc.Text, "```diff") {
+				foundDiff = true
+			}
+		}
+	}
+	if !foundDiff {
+		t.Errorf("expected diff in error output, got: %v", result.Content)
+	}
+
+	// File should be unchanged
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Errorf("file should be unchanged, expected %q, got %q", content, string(data))
+	}
+}
+
+// TestHandleEdit_FuzzyNoFalseAmbiguity verifies that two code blocks at
+// different indentation levels do NOT cause a false "Ambiguous Match"
+// error. With the old fuzzyNormalize (strip all whitespace), both blocks
+// would score 100% similarity, causing false ambiguity. With the new
+// fuzzyNormalize (preserve indentation), only the closer block should
+// score above 0.95, or both should score below 0.95.
+func TestHandleEdit_FuzzyNoFalseAmbiguity(t *testing.T) {
+	tmpDir := t.TempDir()
+	path := filepath.Join(tmpDir, "multi_indent.txt")
+
+	// File has two similar blocks at different indentation levels.
+	// Block 1: double-tab indentation (lines 1-3)
+	// Block 2: triple-tab indentation (lines 5-7)
+	content := "\t\tif isBinaryFile(path) {\n\t\t\tt.Error(\"Expected 513-byte file to not be binary\")\n\t\t}\n\n\t\t\tif isBinaryFile(path) {\n\t\t\t\tt.Error(\"Expected 513-byte file to not be binary\")\n\t\t\t}\n"
+	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// old_string uses single-tab indentation (different from both blocks).
+	// With the old fuzzyNormalize, both blocks would normalize to the same
+	// string (whitespace stripped), causing false ambiguity.
+	// With the new fuzzyNormalize, the blocks have different normalized
+	// forms (different indentation), so they should NOT both score > 0.95.
+	oldStr := "\tif isBinaryFile(path) {\n\t\tt.Error(\"Expected 513-byte file to not be binary\")\n\t}"
+	newStr := "\tif isBinaryFile(path) {\n\t\tt.Error(\"Expected 512-byte file to not be binary\")\n\t}"
+
+	result, _, err := HandleEdit(context.Background(), nil, map[string]any{
+		"path":       path,
+		"old_string": oldStr,
+		"new_string": newStr,
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result == nil {
+		t.Fatal("expected non-nil result")
+	}
+
+	// Check that the error is NOT "Ambiguous Match"
+	for _, c := range result.Content {
+		if tc, ok := c.(*mcp.TextContent); ok {
+			if strings.Contains(tc.Text, "Ambiguous Match") {
+				t.Errorf("should not be ambiguous (different indentation levels), got: %s", tc.Text)
+			}
+		}
+	}
+
+	// File should be unchanged (similarity < 0.95 for both blocks)
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Errorf("file should be unchanged, expected %q, got %q", content, string(data))
 	}
 }
 

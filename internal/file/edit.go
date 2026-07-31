@@ -30,11 +30,6 @@ type EditArgs struct {
 	NewString string
 }
 
-// normalizeWhitespace normalizes a string for matching:
-// 1. Convert \r\n and \r to \n
-// 2. Remove ALL Unicode whitespace characters EXCEPT \n
-// Returns (normalizedString, mapping) where mapping[i] = byte index in original string
-// for the i-th character in normalizedString.
 // findOccurrences performs exact substring matching (no normalization).
 func findOccurrences(content, oldString string) (count, firstStart, firstEnd int, found bool) {
 	if oldString == "" {
@@ -416,19 +411,41 @@ func atomicWriteFile(targetPath, content string) error {
 	return nil
 }
 
-// fuzzyNormalize prepares text for fuzzy matching by keeping newlines,
-// collapsing other whitespace, and lowercasing.
+const tabWidth = 4
+
+var tabSpaces = strings.Repeat(" ", tabWidth)
+
+// fuzzyNormalize prepares text for fuzzy matching by:
+// 1. Converting tabs to tabWidth spaces in leading whitespace (indentation)
+// 2. Preserving leading whitespace to distinguish indentation levels
+// 3. Stripping non-leading whitespace (internal and trailing)
+// 4. Lowercasing all characters
+//
+// This ensures that tab-vs-space differences at the same indentation level
+// produce identical normalized strings (high similarity), while different
+// indentation levels produce different normalized strings (lower similarity),
+// preventing false ambiguous matches.
 func fuzzyNormalize(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
+	atLineStart := true
 	for i := 0; i < len(s); {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		if r == '\n' {
 			b.WriteRune('\n')
+			atLineStart = true
 		} else if unicode.IsSpace(r) {
-			// skip
+			if atLineStart && r != '\r' {
+				if r == '\t' {
+					b.WriteString(tabSpaces)
+				} else {
+					b.WriteRune(r)
+				}
+			}
+			// non-leading whitespace and \r are skipped
 		} else {
 			b.WriteRune(unicode.ToLower(r))
+			atLineStart = false
 		}
 		i += size
 	}
