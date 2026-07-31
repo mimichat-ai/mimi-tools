@@ -302,13 +302,21 @@ func HandleEdit(_ context.Context, _ *mcp.CallToolRequest, args any) (*mcp.CallT
 				Suggestion: "Please provide a more specific string with surrounding context.",
 				BestMatch:  bestMatch,
 			}), true), nil, nil
-		} else {
-			// No suitable fuzzy match found, return error
+		} else if bestMatch != nil {
+			// Fuzzy match found but similarity <= 0.95
 			return output.NewTextResult(output.FormatError("edit", output.ToolError{
-				Type:      "String Not Found",
-				Reason:    "String not found in file and no high-similarity match found.",
-				Target:    parsed.Path,
-				BestMatch: bestMatch,
+				Type:       "Low Similarity Match",
+				Reason:     fmt.Sprintf("Found similar code but similarity (%.1f%%) is below the 95%% threshold for automatic replacement.", bestMatch.Similarity*100),
+				Target:     parsed.Path,
+				BestMatch:  bestMatch,
+				Suggestion: "Update your `old_string` to match the file content exactly, or use the corrected `old_string` shown below.",
+			}), true), nil, nil
+		} else {
+			// No fuzzy match found at all
+			return output.NewTextResult(output.FormatError("edit", output.ToolError{
+				Type:   "String Not Found",
+				Reason: "String not found in file and no similar code found.",
+				Target: parsed.Path,
 			}), true), nil, nil
 		}
 	} else {
@@ -587,6 +595,7 @@ func fuzzyMatch(content, oldString string) (*output.MatchSuggestion, bool) {
 		ByteEnd:    bestCandidate.byteEnd,
 		Similarity: math.Round(bestCandidate.score*1000) / 1000,
 		Diff:       diff,
+		Content:    bestCandidate.content,
 	}, ambiguous
 }
 

@@ -19,6 +19,7 @@ type MatchSuggestion struct {
 	ByteEnd    int     `json:"byte_end" jsonschema:"0-based byte end position"`
 	Similarity float64 `json:"similarity" jsonschema:"normalized similarity to old_string, 1=identical"`
 	Diff       string  `json:"diff" jsonschema:"diff between old_string and the matched content"`
+	Content    string  `json:"content" jsonschema:"the actual text content in the file that was matched"`
 }
 
 // ToolError represents a structured error for display.
@@ -45,15 +46,28 @@ func FormatError(toolName string, err ToolError) string {
 	if err.BestMatch != nil {
 		sb.WriteString("\n\n### 🔍 Found Similar Code (Not Replaced)\n\n")
 		fmt.Fprintf(&sb, "**Location:** Lines %d-%d | **Similarity:** %.1f%%\n\n", err.BestMatch.LineStart, err.BestMatch.LineEnd, err.BestMatch.Similarity*100)
-		if err.Type == "Ambiguous Match" {
+
+		switch err.Type {
+		case "Ambiguous Match":
 			sb.WriteString("The following code is one of multiple similar blocks found. The match is ambiguous because multiple non-overlapping regions have similarity > 95%.\n\n")
-		} else {
+		case "Low Similarity Match":
+			sb.WriteString("The following code in the file is similar to your `old_string`, but the similarity is below the 95% threshold for automatic replacement.\n\n")
+		default:
 			sb.WriteString("The following code in the file is similar to your `old_string`, but the similarity is below the 95% threshold for automatic replacement.\n\n")
 		}
+
 		sb.WriteString("**Difference between your `old_string` and the file content:**\n\n")
 		sb.WriteString("```diff\n")
 		sb.WriteString(err.BestMatch.Diff)
 		sb.WriteString("\n```\n\n")
+
+		if err.BestMatch.Content != "" {
+			sb.WriteString("**Corrected `old_string` (copy this to retry):**\n\n")
+			sb.WriteString("```\n")
+			sb.WriteString(err.BestMatch.Content)
+			sb.WriteString("\n```\n\n")
+		}
+
 		sb.WriteString("**Suggested actions:**\n")
 		sb.WriteString("1. Update your `old_string` to match the file content exactly, or\n")
 		sb.WriteString("2. Use the above location to manually verify the code\n")
