@@ -1,25 +1,33 @@
 #!/bin/bash
-# deploy-mimi-tools.sh
-# Deploy mimi-tools MCP server in a secure Podman container
+# deploy-android.sh
+# Deploy mimi-tools MCP server (Android variant) in a secure Podman container
 # Supports both online (build) and offline (load from tar) modes
+#
+# This variant is optimised for Android development:
+#   - JDK 21 + Android SDK (API 35, build-tools 35.0.1, platform-tools)
+#   - No Go, Node.js, or Python toolchains
+#   - Persistent ~/.gradle cache and ~/.vscode-server volumes
+#   - Port 2334 (to avoid conflict with the standard mimi-tools on 2333)
 
 set -e
 
 # Configuration
-CONTAINER_NAME="mimi-tools"
-IMAGE_NAME="mimi-tools:latest"
-IMAGE_TAR="mimi-tools.tar"
-HOST_PORT=2333
+CONTAINER_NAME="mimi-tools-android"
+IMAGE_NAME="mimi-tools-android:latest"
+IMAGE_TAR="mimi-tools-android.tar"
+HOST_PORT=2334
 CONTAINER_PORT=2333
 PROJECTS_DIR="/projects"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DNS_PRIMARY="${DNS_SERVER:-1.1.1.1}"
 DNS_SECONDARY="${DNS_SERVER2:-1.0.0.1}"
+
+# Host directories for persistent data
 GIT_CONFIG_DIR="${MIMI_GIT_CONFIG_DIR:-$HOME/.config/mimi-tools/git}"
-GO_CONFIG_DIR="${MIMI_GO_CONFIG_DIR:-$HOME/.config/mimi-tools/go}"
+GRADLE_CACHE_DIR="${MIMI_GRADLE_CACHE_DIR:-$HOME/.config/mimi-tools/gradle}"
 VSCODE_SERVER_DIR="${MIMI_VSCODE_SERVER_DIR:-$HOME/.config/mimi-tools/vscode-server}"
 
-# Git config overrides (set these before running deploy.sh)
+# Git config overrides (set these before running deploy-android.sh)
 MIMI_GIT_USER_NAME="${MIMI_GIT_USER_NAME:-mimi-tools}"
 MIMI_GIT_USER_EMAIL="${MIMI_GIT_USER_EMAIL:-mimi-tools@localhost}"
 MIMI_GIT_CONFIG_EXTRA="${MIMI_GIT_CONFIG_EXTRA:-}"
@@ -29,15 +37,13 @@ MIMI_GIT_CONFIG_EXTRA="${MIMI_GIT_CONFIG_EXTRA:-}"
 #     GOPROXY=https://goproxy.cn,direct
 #     APT_MIRROR=mirrors.ustc.edu.cn
 #     APT_SECURITY_MIRROR=mirrors.ustc.edu.cn/debian-security
-#     NODE_MIRROR=https://npmmirror.com/mirrors/node
-#     NPM_REGISTRY=https://registry.npmmirror.com
-#     BASE_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie
+#     ANDROID_SDK_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/android/repository
+#     BASE_IMAGE=docker.m.daocloud.io/library/debian:stable-slim
 #     GO_BUILDER_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie
 BUILD_GOPROXY="${GOPROXY:-}"
 BUILD_APT_MIRROR="${APT_MIRROR:-}"
 BUILD_APT_SECURITY_MIRROR="${APT_SECURITY_MIRROR:-}"
-BUILD_NODE_MIRROR="${NODE_MIRROR:-}"
-BUILD_NPM_REGISTRY="${NPM_REGISTRY:-}"
+BUILD_ANDROID_SDK_MIRROR="${ANDROID_SDK_MIRROR:-}"
 BUILD_BASE_IMAGE="${BASE_IMAGE:-}"
 BUILD_GO_BUILDER_IMAGE="${GO_BUILDER_IMAGE:-}"
 BUILD_USER_UID="${USER_UID:-}"
@@ -59,17 +65,11 @@ if [[ "$1" == "--offline" ]] || [[ "$1" == "-o" ]]; then
     echo "=== Offline Mode: Loading image from $IMAGE_TAR ==="
 fi
 
-echo "=== Deploying mimi-tools MCP Server ==="
+echo "=== Deploying mimi-tools MCP Server (Android Variant) ==="
 echo "Script directory: $SCRIPT_DIR"
 
-# Step 1: Create git config directory
-echo "[1/6] Creating git config directory..."
-mkdir -p "$GO_CONFIG_DIR"
-RUNTIME_GOPROXY="${GOPROXY:-https://proxy.golang.org,direct}"
-cat > "$GO_CONFIG_DIR/env" << EOF
-GOPROXY=${RUNTIME_GOPROXY}
-EOF
-chmod 644 "$GO_CONFIG_DIR/env"
+# Step 1: Create config directories
+echo "[1/6] Creating config directories..."
 
 mkdir -p "$GIT_CONFIG_DIR"
 cat > "$GIT_CONFIG_DIR/.gitconfig" << EOF
@@ -84,6 +84,9 @@ if [ -n "$MIMI_GIT_CONFIG_EXTRA" ]; then
     echo "" >> "$GIT_CONFIG_DIR/.gitconfig"
     echo "$MIMI_GIT_CONFIG_EXTRA" >> "$GIT_CONFIG_DIR/.gitconfig"
 fi
+
+# Gradle cache (persistent — avoids re-downloading Gradle distribution and dependencies)
+mkdir -p "$GRADLE_CACHE_DIR"
 
 # VS Code Server (persistent — avoids re-downloading on container restart)
 mkdir -p "$VSCODE_SERVER_DIR"
@@ -131,8 +134,7 @@ else
     [ -n "$BUILD_GOPROXY" ] && BUILD_ARGS+=(--build-arg "GOPROXY=$BUILD_GOPROXY")
     [ -n "$BUILD_APT_MIRROR" ] && BUILD_ARGS+=(--build-arg "APT_MIRROR=$BUILD_APT_MIRROR")
     [ -n "$BUILD_APT_SECURITY_MIRROR" ] && BUILD_ARGS+=(--build-arg "APT_SECURITY_MIRROR=$BUILD_APT_SECURITY_MIRROR")
-    [ -n "$BUILD_NODE_MIRROR" ] && BUILD_ARGS+=(--build-arg "NODE_MIRROR=$BUILD_NODE_MIRROR")
-    [ -n "$BUILD_NPM_REGISTRY" ] && BUILD_ARGS+=(--build-arg "NPM_REGISTRY=$BUILD_NPM_REGISTRY")
+    [ -n "$BUILD_ANDROID_SDK_MIRROR" ] && BUILD_ARGS+=(--build-arg "ANDROID_SDK_MIRROR=$BUILD_ANDROID_SDK_MIRROR")
     [ -n "$BUILD_BASE_IMAGE" ] && BUILD_ARGS+=(--build-arg "BASE_IMAGE=$BUILD_BASE_IMAGE")
     [ -n "$BUILD_GO_BUILDER_IMAGE" ] && BUILD_ARGS+=(--build-arg "GO_BUILDER_IMAGE=$BUILD_GO_BUILDER_IMAGE")
     [ -n "$BUILD_USER_UID" ] && BUILD_ARGS+=(--build-arg "USER_UID=$BUILD_USER_UID")
@@ -145,7 +147,7 @@ else
         echo "   Build args: ${BUILD_ARGS[*]}"
     fi
 
-    podman build "${BUILD_ARGS[@]}" -t "$IMAGE_NAME" "$SCRIPT_DIR"
+    podman build -f Dockerfile.android "${BUILD_ARGS[@]}" -t "$IMAGE_NAME" "$SCRIPT_DIR"
 fi
 
 # Step 5: Run the container
@@ -157,9 +159,9 @@ podman run -d \
   --cap-drop=ALL \
   --tmpfs /home/mimi-tools/.cache \
   --tmpfs /home/mimi-tools/.local \
-  --tmpfs /home/mimi-tools/.npm \
-  --tmpfs /opt/go \
+  --tmpfs /home/mimi-tools/.android \
   --tmpfs /tmp \
+  -v "$GRADLE_CACHE_DIR:/home/mimi-tools/.gradle" \
   -v "$VSCODE_SERVER_DIR:/home/mimi-tools/.vscode-server" \
   --dns "$DNS_PRIMARY" \
   --dns "$DNS_SECONDARY" \
@@ -167,7 +169,6 @@ podman run -d \
   -e "MIMI_TRANSPORT=$MIMI_TRANSPORT" \
   -v "$PROJECTS_DIR:/projects" \
   -v "$GIT_CONFIG_DIR/.gitconfig:/home/mimi-tools/.gitconfig" \
-  -v "$GO_CONFIG_DIR:/home/mimi-tools/.config/go" \
   -w /projects \
   "$IMAGE_NAME"
 
@@ -189,6 +190,7 @@ sudo loginctl enable-linger "$(whoami)"
 echo ""
 echo "=== Deployment Complete ==="
 echo ""
+echo "Variant: Android (JDK 21 + Android SDK API 35)"
 echo "Transport mode: $MIMI_TRANSPORT"
 echo "Container status:"
 podman ps --filter "name=$CONTAINER_NAME"

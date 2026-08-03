@@ -1,0 +1,154 @@
+# Dockerfile.android — Android development sandbox variant of mimi-tools
+#
+# This image is optimised for building native Android apps (Java/Kotlin + Gradle).
+# It does NOT include Go, Node.js, or Python toolchains.
+#
+# Components:
+#   - OpenJDK 21 (headless)
+#   - Android SDK cmdline-tools, platform-tools, platforms;android-35, build-tools;35.0.1
+#   - Common Linux utilities (git, curl, wget, jq, etc.)
+#
+# Usage:
+#   podman build -f Dockerfile.android -t mimi-tools-android:latest .
+#
+# For users in China:
+#   podman build \
+#     --build-arg GO_BUILDER_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie \
+#     --build-arg BASE_IMAGE=docker.m.daocloud.io/library/debian:stable-slim \
+#     --build-arg APT_MIRROR=mirrors.ustc.edu.cn \
+#     --build-arg ANDROID_SDK_MIRROR=https://mirrors.tuna.tsinghua.edu.cn/android/repository \
+#     -f Dockerfile.android -t mimi-tools-android:latest .
+
+# ─── Global build arguments (must be before first FROM) ────────────────────
+# Allow overriding base images (e.g., for China: --build-arg GO_BUILDER_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie)
+ARG GO_BUILDER_IMAGE=golang:1.26.5-trixie
+ARG BASE_IMAGE=debian:stable-slim
+
+# ─── Stage 1: Build mimi-tools binary (same as standard Dockerfile) ──────────
+
+FROM ${GO_BUILDER_IMAGE} AS go-builder
+
+ARG GOPROXY=https://proxy.golang.org,direct
+RUN go env -w GOPROXY=${GOPROXY}
+
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILDTIME=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath \
+    -ldflags "-X main.version=${VERSION} -X main.commit=${COMMIT} -X main.buildTime=${BUILDTIME}" \
+    -o mimi-tools ./cmd/mimi-tools
+
+# ─── Stage 2: Android development sandbox ───────────────────────────────────
+
+FROM ${BASE_IMAGE}
+
+# Allow overriding apt mirror (e.g., for China: --build-arg APT_MIRROR=mirrors.ustc.edu.cn)
+ARG APT_MIRROR=deb.debian.org
+ARG APT_SECURITY_MIRROR=security.debian.org
+# Handle both deb822 (trixie+) and traditional (bookworm) apt source formats,
+# and add backports repository (needed for JDK on older Debian releases)
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+        && sed -i "s|security.debian.org|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list \
+        && sed -i "s|security.debian.org|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list; \
+    fi \
+    && echo "deb http://${APT_MIRROR}/debian $(. /etc/os-release && echo $VERSION_CODENAME)-backports main" \
+       > /etc/apt/sources.list.d/backports.list
+
+# Install base tools + JDK 21 (headless — no GUI libs, saves ~230 MB)
+# All in one RUN to share apt cache
+RUN apt-get update && apt-get install -y \
+    # Core utilities (cat, cp, mv, rm, mkdir, cut, sort, uniq, etc.)
+    coreutils \
+    # Text processing
+    sed gawk grep \
+    # System tools
+    procps findutils \
+    # Network tools
+    iputils-ping net-tools \
+    # Compression
+    tar gzip zip unzip \
+    # Other utilities
+    which less \
+    # Hex dump (frequently used by LLMs to inspect binary files)
+    xxd \
+    # Development basics
+    git curl wget jq ca-certificates \
+    # JDK 21 (headless) — Debian 13 (trixie) default, LTS, compatible with AGP 8.x
+    openjdk-21-jdk-headless \
+    # Clean up
+    && rm -rf /var/lib/apt/lists/*
+
+# Set up JAVA_HOME (architecture-independent via symlink)
+RUN ln -sf /usr/lib/jvm/java-21-openjdk-$(dpkg --print-architecture) /usr/lib/jvm/java-21-current
+ENV JAVA_HOME=/usr/lib/jvm/java-21-current
+
+# ─── Android SDK ────────────────────────────────────────────────────────────
+
+# Allow overriding Android SDK download mirror
+# Official:  https://dl.google.com/android/repository
+# TUNA:      https://mirrors.tuna.tsinghua.edu.cn/android/repository
+ARG ANDROID_SDK_MIRROR=https://dl.google.com/android/repository
+ARG CMDLINE_TOOLS_VERSION=15859902
+
+ARG ANDROID_SDK_ROOT=/opt/android-sdk
+ENV ANDROID_SDK_ROOT=${ANDROID_SDK_ROOT}
+ENV ANDROID_HOME=${ANDROID_SDK_ROOT}
+
+# PATH includes: JDK bin, SDK cmdline-tools, platform-tools, standard paths
+ENV PATH="${JAVA_HOME}/bin:${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin:${ANDROID_SDK_ROOT}/platform-tools:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+# Download and install Android command-line tools
+RUN mkdir -p ${ANDROID_SDK_ROOT}/cmdline-tools \
+    && curl -fsSL ${ANDROID_SDK_MIRROR}/commandlinetools-linux-${CMDLINE_TOOLS_VERSION}_latest.zip \
+       -o /tmp/cmdline-tools.zip \
+    && unzip -q /tmp/cmdline-tools.zip -d ${ANDROID_SDK_ROOT}/cmdline-tools \
+    && mv ${ANDROID_SDK_ROOT}/cmdline-tools/cmdline-tools ${ANDROID_SDK_ROOT}/cmdline-tools/latest \
+    && rm /tmp/cmdline-tools.zip
+
+# Accept all SDK licenses (non-interactive)
+RUN yes | sdkmanager --sdk_root=${ANDROID_SDK_ROOT} --licenses > /dev/null
+
+# Install SDK components:
+#   - platform-tools: adb, fastboot (for network debugging and APK installation)
+#   - platforms;android-35: Android 15 (API 35) platform for compilation
+#   - build-tools;35.0.1: build tools matching API 35 (latest patch)
+RUN sdkmanager --sdk_root=${ANDROID_SDK_ROOT} \
+    "platform-tools" \
+    "platforms;android-35" \
+    "build-tools;35.0.1"
+
+# ─── Non-root user ──────────────────────────────────────────────────────────
+
+# Allow overriding user UID (default 1000, change if your host user UID differs)
+ARG USER_UID=1000
+ARG USER_GID=1000
+
+RUN useradd -u ${USER_UID} -U -m -s /bin/bash mimi-tools
+
+# ─── Copy mimi-tools binary ──────────────────────────────────────────────────
+
+COPY --from=go-builder --chown=mimi-tools:mimi-tools /build/mimi-tools /usr/local/bin/mimi-tools
+
+# ─── Runtime configuration ──────────────────────────────────────────────────
+
+WORKDIR /projects
+
+USER mimi-tools
+
+EXPOSE 2333
+
+# Environment variables
+# MIMI_TRANSPORT: transport type (http, sse, stdio), default: http
+# MIMI_ADDR: listen address, default: 0.0.0.0:2333
+ENV MIMI_TRANSPORT="http"
+ENV MIMI_ADDR="0.0.0.0:2333"
+
+ENTRYPOINT ["mimi-tools"]

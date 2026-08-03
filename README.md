@@ -22,6 +22,8 @@ An MCP tool server that gives LLM agents filesystem and shell access — built t
 
 - **Complete development environment.** The Docker image ships with Go, Node.js, Python, git, and development tools (golangci-lint, delve, etc.). LLM agents can build, test, lint, and debug code — not just read and write files.
 
+- **Android variant.** A separate `Dockerfile.android` provides a JDK 21 + Android SDK (API 35) environment for building native Android apps. See [DEPLOYMENT-ANDROID.md](DEPLOYMENT-ANDROID.md) for details.
+
 ## Quick Start
 
 ```bash
@@ -38,6 +40,19 @@ go build -o mimi-tools ./cmd/mimi-tools
 docker build -t mimi-tools .
 docker run -p 2333:2333 -v /projects:/projects mimi-tools
 ```
+
+<details>
+<summary>📱 Android development variant</summary>
+
+```bash
+# Build the Android variant (JDK 21 + Android SDK API 35)
+docker build -f Dockerfile.android -t mimi-tools-android:latest .
+docker run -p 2334:2333 -v /projects:/projects mimi-tools-android:latest
+```
+
+See [DEPLOYMENT-ANDROID.md](DEPLOYMENT-ANDROID.md) for full details.
+
+</details>
 
 ### Connect your MCP client
 
@@ -86,6 +101,7 @@ docker run -p 2333:2333 -v /projects:/projects mimi-tools
 ## Documentation
 
 - [DEPLOYMENT.md](DEPLOYMENT.md) — Docker/Podman deployment, deploy.sh, environment variables, security hardening
+- [DEPLOYMENT-ANDROID.md](DEPLOYMENT-ANDROID.md) — Android variant deployment (JDK 21 + Android SDK, deploy-android.sh)
 - [CONTRIBUTING.md](CONTRIBUTING.md) — How to contribute
 - [CHANGELOG.md](CHANGELOG.md) — Release history
 

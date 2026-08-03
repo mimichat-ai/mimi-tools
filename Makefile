@@ -31,3 +31,17 @@ build:
 
 .PHONY: ci
 ci: lint test build
+
+# ─── Android variant ────────────────────────────────────────────────────────
+# Build and run the Android development sandbox image (Dockerfile.android)
+# Requires podman (or docker). See DEPLOYMENT-ANDROID.md for details.
+
+ANDROID_IMAGE := mimi-tools-android:latest
+
+.PHONY: build-android
+build-android:
+	podman build -f Dockerfile.android -t $(ANDROID_IMAGE) .
+
+.PHONY: run-android
+run-android:
+	podman run -it --rm -p 2334:2333 -v /projects:/projects $(ANDROID_IMAGE)

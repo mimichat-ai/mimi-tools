@@ -74,6 +74,8 @@ docker run -p 2333:2333 -v /projects:/projects -e MIMI_TRANSPORT=sse mimi-tools:
 
 ```bash
 docker build \
+  --build-arg GO_BUILDER_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie \
+  --build-arg BASE_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie \
   --build-arg GOPROXY=https://goproxy.cn,direct \
   --build-arg APT_MIRROR=mirrors.ustc.edu.cn \
   --build-arg APT_SECURITY_MIRROR=mirrors.ustc.edu.cn/debian-security \
@@ -87,6 +89,8 @@ docker build \
 Set the same variables as environment variables before running `deploy.sh`:
 
 ```bash
+GO_BUILDER_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie \
+BASE_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie \
 GOPROXY=https://goproxy.cn,direct \
 APT_MIRROR=mirrors.ustc.edu.cn \
 APT_SECURITY_MIRROR=mirrors.ustc.edu.cn/debian-security \
@@ -134,11 +138,14 @@ MIMI_GIT_CONFIG_EXTRA="[core]
 | `MIMI_GIT_USER_EMAIL` | `mimi-tools@localhost` | Git user email in container's `.gitconfig` |
 | `MIMI_GIT_CONFIG_EXTRA` | *(empty)* | Additional git config lines appended to `.gitconfig` |
 | `MIMI_GO_CONFIG_DIR` | `~/.config/mimi-tools/go` | Host path for Go environment config |
+| `MIMI_VSCODE_SERVER_DIR` | `~/.config/mimi-tools/vscode-server` | Host path for persistent VS Code Server |
 | `GOPROXY` | *(empty)* | Go module proxy, passed as `--build-arg` to `podman build` (e.g. `https://goproxy.cn,direct`) |
 | `APT_MIRROR` | *(empty)* | APT mirror, passed as `--build-arg` (e.g. `mirrors.ustc.edu.cn`) |
 | `APT_SECURITY_MIRROR` | *(empty)* | APT security mirror, passed as `--build-arg` |
 | `NODE_MIRROR` | *(empty)* | Node.js download mirror, passed as `--build-arg` |
 | `NPM_REGISTRY` | *(empty)* | NPM registry, passed as `--build-arg` |
+| `BASE_IMAGE` | *(empty)* | Final stage base image, passed as `--build-arg` (e.g. `docker.m.daocloud.io/library/golang:1.26.5-trixie`) |
+| `GO_BUILDER_IMAGE` | *(empty)* | Go builder stage base image, passed as `--build-arg` (e.g. `docker.m.daocloud.io/library/golang:1.26.5-trixie`) |
 | `USER_UID` | *(empty)* | Container user UID, passed as `--build-arg` |
 | `USER_GID` | *(empty)* | Container user GID, passed as `--build-arg` |
 | `MIMI_VERSION` | *(auto)* | Version string for `--build-arg VERSION` (default: `git describe`) |

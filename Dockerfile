@@ -1,7 +1,16 @@
 # Build stage for Go
 # Usage for users in China:
-#   docker build --build-arg GOPROXY=https://goproxy.cn,direct -t mimi-tools .
-FROM golang:1.26.5-trixie AS go-builder
+#   docker build \
+#     --build-arg GO_BUILDER_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie \
+#     --build-arg BASE_IMAGE=docker.m.daocloud.io/library/golang:1.26.5-trixie \
+#     --build-arg GOPROXY=https://goproxy.cn,direct \
+#     -t mimi-tools .
+
+# ─── Global build arguments (must be before first FROM) ────────────────────
+ARG GO_BUILDER_IMAGE=golang:1.26.5-trixie
+ARG BASE_IMAGE=golang:1.26.5-trixie
+
+FROM ${GO_BUILDER_IMAGE} AS go-builder
 
 ARG GOPROXY=https://proxy.golang.org,direct
 RUN go env -w GOPROXY=${GOPROXY}
@@ -30,13 +39,19 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-X main.version=${VERS
 #   For production deployments where exec is not needed, you can create a slim variant
 #   by changing the base image to `debian:stable-slim` and removing the dev tool layers.
 
-FROM golang:1.26.5-trixie
+FROM ${BASE_IMAGE}
 
 # Allow overriding apt mirror (e.g., for China: --build-arg APT_MIRROR=mirrors.ustc.edu.cn)
 ARG APT_MIRROR=deb.debian.org
 ARG APT_SECURITY_MIRROR=security.debian.org
-RUN sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
-    && sed -i "s|security.debian.org|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list.d/debian.sources
+# Handle both deb822 (trixie+) and traditional (bookworm) apt source formats
+RUN if [ -f /etc/apt/sources.list.d/debian.sources ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list.d/debian.sources \
+        && sed -i "s|security.debian.org|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list.d/debian.sources; \
+    elif [ -f /etc/apt/sources.list ]; then \
+        sed -i "s|deb.debian.org|${APT_MIRROR}|g" /etc/apt/sources.list \
+        && sed -i "s|security.debian.org|${APT_SECURITY_MIRROR}|g" /etc/apt/sources.list; \
+    fi
 
 # Allow overriding Node.js download mirror
 ARG NODE_MIRROR=https://nodejs.org/dist
@@ -60,6 +75,8 @@ RUN apt-get update && apt-get install -y \
     tar gzip zip unzip \
     # Other utilities
     which less man \
+    # Hex dump (frequently used by LLMs to inspect binary files)
+    xxd \
     # Development basics
     git curl wget jq ca-certificates \
     # Build tools (some pip packages require compilation)
